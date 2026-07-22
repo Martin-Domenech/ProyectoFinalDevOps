@@ -18,7 +18,10 @@ const poolConfig = {
   password: process.env.DB_PASSWORD,
 };
 
-const sslEnabled = Boolean(process.env.DB_SSL && process.env.DB_SSL !== 'false' && process.env.DB_SSL !== '0');
+const rawDbSsl = process.env.DB_SSL;
+const explicitSsl = rawDbSsl === undefined ? undefined : /^(1|true|yes|on)$/i.test(rawDbSsl);
+const isAwsRds = typeof poolConfig.host === 'string' && poolConfig.host.endsWith('.rds.amazonaws.com');
+const sslEnabled = explicitSsl !== undefined ? explicitSsl : isAwsRds;
 if (sslEnabled) {
   poolConfig.ssl = { rejectUnauthorized: false };
 }
@@ -29,6 +32,8 @@ const poolLogConfig = {
   database: poolConfig.database,
   user: poolConfig.user,
   ssl: poolConfig.ssl || false,
+  sslSource: explicitSsl !== undefined ? 'DB_SSL' : isAwsRds ? 'rds-detection' : 'default-false',
+  rawDbSsl: rawDbSsl,
 };
 console.log('PostgreSQL connection config', poolLogConfig);
 console.log('PostgreSQL pool config final', poolLogConfig);
