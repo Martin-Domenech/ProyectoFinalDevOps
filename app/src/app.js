@@ -14,6 +14,13 @@ app.get('/health', async (req, res) => {
     await db.query('SELECT 1');
     return res.json({ status: 'ok', database: 'connected' });
   } catch (error) {
+    console.error('Health check database error', {
+      message: error.message,
+      code: error.code,
+      detail: error.detail,
+      hint: error.hint,
+    });
+
     return res.status(503).json({ status: 'error', database: 'unavailable' });
   }
 });

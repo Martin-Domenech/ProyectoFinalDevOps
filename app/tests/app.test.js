@@ -33,4 +33,11 @@ describe('API mínima de DevOps', () => {
     expect(response.body).toEqual({ status: 'error', database: 'unavailable' });
     expect(db.query).toHaveBeenCalledWith('SELECT 1');
   });
+
+  it('GET /health no expone detalles de error de la base', async () => {
+    db.query.mockRejectedValue(new Error('db unavailable'));
+    const response = await request(app).get('/health');
+    expect(response.body).not.toHaveProperty('message');
+    expect(response.body).not.toHaveProperty('code');
+  });
 });

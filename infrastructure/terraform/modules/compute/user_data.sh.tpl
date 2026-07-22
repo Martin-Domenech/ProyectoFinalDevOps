@@ -1,16 +1,24 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
+exec > >(tee -a /var/log/devops-user-data.log) 2>&1
 
-# Install system dependencies
-yum update -y
-yum install -y git
+echo "Starting user_data for DevOps API"
 
-# Instalar Node.js
-curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-yum install -y nodejs
+echo "Checking available Node.js packages"
+dnf module list nodejs || true
+dnf list available 'nodejs*' 'npm*' || true
+dnf info nodejs20 npm || true
 
-# Clonar el repositorio y entrar en la carpeta de la app
+echo "Installing required packages"
+dnf -y install git nodejs20 npm
+
+echo "Verifying installed versions"
+git --version
+node --version
+npm --version
+
+# Preparar directorio de la aplicación
 cd /home/ec2-user
 rm -rf ProyectoFinalDevOps
 sudo -u ec2-user git clone "${repo_url}" ProyectoFinalDevOps
@@ -18,7 +26,7 @@ cd /home/ec2-user/ProyectoFinalDevOps/app
 sudo chown -R ec2-user:ec2-user /home/ec2-user/ProyectoFinalDevOps
 
 # Instalar dependencias de la aplicación
-sudo -u ec2-user npm install --production
+sudo -u ec2-user npm install --omit=dev
 
 # Crear archivo .env para la aplicación
 cat > /home/ec2-user/ProyectoFinalDevOps/app/.env <<EOF
@@ -51,5 +59,8 @@ WantedBy=multi-user.target
 SERVICE
 
 systemctl daemon-reload
-systemctl enable devops-api.service
-systemctl start devops-api.service
+systemctl enable --now devops-api.service
+
+systemctl status devops-api.service --no-pager
+curl --fail http://localhost:3000 || true
+echo "user_data completed successfully"
