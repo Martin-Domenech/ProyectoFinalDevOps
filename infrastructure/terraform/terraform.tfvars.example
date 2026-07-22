@@ -1,0 +1,10 @@
+aws_region = "us-east-1"
+environment = "devops-academico"
+instance_type = "t4g.micro"
+db_instance_class = "db.t4g.micro"
+db_allocated_storage = 20
+db_name = "devdb"
+db_username = "devuser"
+db_password_length = 16
+public_key_path = "~/.ssh/id_rsa.pub"
+api_port = 3000
