@@ -14,6 +14,7 @@ resource "aws_instance" "app" {
   key_name                    = aws_key_pair.deploy_key.key_name
   vpc_security_group_ids      = [var.security_group_id]
   associate_public_ip_address = true
+  user_data_replace_on_change = true
 
   user_data = templatefile("${path.module}/user_data.sh.tpl", {
     db_endpoint = var.db_endpoint

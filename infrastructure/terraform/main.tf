@@ -62,4 +62,5 @@ module "compute" {
   db_username       = var.db_username
   db_password       = module.database.db_password
   security_group_id = module.security.ec2_security_group_id
+  repo_url          = "https://github.com/Martin-Domenech/ProyectoFinalDevOps.git"
 }
