@@ -8,3 +8,10 @@ db_username = "devuser"
 db_password_length = 16
 public_key_path = "~/.ssh/id_rsa.pub"
 api_port = 3000
+
+# EKS / node group defaults
+eks_node_instance_type = "t4g.small"
+eks_node_min_size = 1
+eks_node_desired_size = 1
+eks_node_max_size = 3
+monthly_budget_usd = 10

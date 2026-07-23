@@ -1,0 +1,200 @@
+name: CI/CD DevSecOps
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/martin-domenech/proyecto-final-devops
+  TF_WORKING_DIR: infrastructure/terraform
+
+jobs:
+  quality:
+    name: Tests and validations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Run tests
+        working-directory: app
+        run: npm test -- --runInBand
+
+      - name: Dependency audit
+        working-directory: app
+        run: npm audit --audit-level=high
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Validate Terraform
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Kubernetes rendering
+        run: kubectl kustomize infrastructure/kubernetes > /dev/null
+
+  sast:
+    name: CodeQL SAST
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - uses: github/codeql-action/analyze@v3
+
+  build:
+    name: Build and push image
+    if: github.event_name != 'pull_request'
+    needs: [quality, sast]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: image
+        run: echo "value=${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: app
+          file: app/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ steps.image.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Provision and deploy
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: academic
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Provision infrastructure
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+          terraform apply -auto-approve
+
+      - name: Configure cluster and application values
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          aws eks update-kubeconfig --name "$(terraform output -raw eks_cluster_name)"
+          kubectl apply -f ../kubernetes/01-namespace.yml
+          kubectl -n devops-backend create configmap devops-api-config \
+            --from-literal=PORT=3000 \
+            --from-literal=DB_HOST="$(terraform output -raw rds_endpoint)" \
+            --from-literal=DB_PORT=5432 \
+            --from-literal=DB_NAME=devdb \
+            --from-literal=DB_USER=devuser \
+            --from-literal=DB_SSL=true \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n devops-backend create secret generic devops-api-secret \
+            --from-literal=DB_PASSWORD="$(terraform output -raw db_password)" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n devops-backend create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username="${{ secrets.GHCR_USERNAME }}" \
+            --docker-password="${{ secrets.GHCR_TOKEN }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy application and monitoring
+        env:
+          DEPLOY_IMAGE: ${{ needs.build.outputs.image }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: |
+          sed -i "s|ghcr.io/martin-domenech/proyecto-final-devops:latest|${DEPLOY_IMAGE}|g" \
+            infrastructure/kubernetes/04-init-db-job.yml \
+            infrastructure/kubernetes/05-backend-deployment.yml
+          kubectl -n devops-backend delete job devops-api-init-db --ignore-not-found
+          kubectl apply -f infrastructure/kubernetes/04-init-db-job.yml
+          kubectl -n devops-backend wait --for=condition=complete job/devops-api-init-db --timeout=5m
+          kubectl apply -f infrastructure/kubernetes/05-backend-deployment.yml
+          kubectl apply -f infrastructure/kubernetes/06-backend-service.yml
+          kubectl apply -f infrastructure/kubernetes/07-backend-ingress.yml
+          kubectl apply -f infrastructure/kubernetes/08-backend-hpa.yml
+          kubectl apply -f infrastructure/monitoring/monitoring.yml
+          kubectl -n monitoring create secret generic grafana-admin \
+            --from-literal=admin-user=admin \
+            --from-literal=admin-password="${GRAFANA_ADMIN_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n devops-backend rollout status deployment/devops-api --timeout=5m
+
+  dast:
+    name: OWASP ZAP DAST
+    if: github.ref == 'refs/heads/main'
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Resolve deployed URL
+        id: target
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+          echo "url=$(terraform output -raw api_url)" >> "$GITHUB_OUTPUT"
+      - name: Run baseline scan
+        run: |
+          docker run --rm -v "${PWD}:/zap/wrk:rw" zaproxy/zap-stable \
+            zap-baseline.py -t "${{ steps.target.outputs.url }}" -r zap-report.html || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap-report.html
+          if-no-files-found: error

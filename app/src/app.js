@@ -1,9 +1,12 @@
 const express = require('express');
+const client = require('prom-client');
 const usersRouter = require('./routes/users');
 const db = require('./db');
 
 const app = express();
 app.use(express.json());
+
+client.collectDefaultMetrics();
 
 app.get('/', (req, res) => {
   res.json({ message: 'Bienvenido a la API mínima de DevOps' });
@@ -23,6 +26,11 @@ app.get('/health', async (req, res) => {
 
     return res.status(503).json({ status: 'error', database: 'unavailable' });
   }
+});
+
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
 });
 
 app.use('/users', usersRouter);

@@ -1,0 +1,372 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: monitoring
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager:9093"]
+    rule_files:
+      - /etc/prometheus/rules.yml
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: kubernetes_pod
+  rules.yml: |
+    groups:
+      - name: devops-api
+        rules:
+          - alert: DevOpsApiUnavailable
+            expr: absent(up{kubernetes_namespace="devops-backend"}) or up{kubernetes_namespace="devops-backend"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "La API no entrega métricas"
+          - alert: DevOpsApiHighCpu
+            expr: rate(process_cpu_user_seconds_total{kubernetes_namespace="devops-backend"}[5m]) > 0.8
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Uso alto de CPU en la API"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=7d
+          ports:
+            - containerPort: 9090
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    route:
+      receiver: academic-webhook
+      group_wait: 10s
+      group_interval: 1m
+    receivers:
+      - name: academic-webhook
+        webhook_configs:
+          - url: http://alert-webhook:8080/alerts
+            send_resolved: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.28.1
+          args: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+          ports:
+            - containerPort: 9093
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 150m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-webhook
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alert-webhook
+  template:
+    metadata:
+      labels:
+        app: alert-webhook
+    spec:
+      containers:
+        - name: webhook
+          image: mendhak/http-https-echo:35
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-webhook
+  namespace: monitoring
+spec:
+  selector:
+    app: alert-webhook
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-provisioning
+  namespace: monitoring
+data:
+  datasource.yml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+  dashboard-provider.yml: |
+    apiVersion: 1
+    providers:
+      - name: DevOps
+        folder: DevOps
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard
+  namespace: monitoring
+data:
+  devops-api.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "panels": [
+        {
+          "title": "API disponible",
+          "type": "stat",
+          "targets": [{"expr": "up{kubernetes_namespace=\"devops-backend\"}"}],
+          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0}
+        },
+        {
+          "title": "CPU del proceso",
+          "type": "timeseries",
+          "targets": [{"expr": "rate(process_cpu_user_seconds_total{kubernetes_namespace=\"devops-backend\"}[5m])"}],
+          "gridPos": {"h": 8, "w": 16, "x": 8, "y": 0}
+        },
+        {
+          "title": "Memoria del proceso",
+          "type": "timeseries",
+          "targets": [{"expr": "process_resident_memory_bytes{kubernetes_namespace=\"devops-backend\"}"}],
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["devops", "nodejs"],
+      "title": "DevOps API",
+      "uid": "devops-api"
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-user
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: admin-password
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+              subPath: datasource.yml
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/dashboards/provider.yml
+              subPath: dashboard-provider.yml
+            - name: dashboard
+              mountPath: /var/lib/grafana/dashboards/devops-api.json
+              subPath: devops-api.json
+      volumes:
+        - name: provisioning
+          configMap:
+            name: grafana-provisioning
+        - name: dashboard
+          configMap:
+            name: grafana-dashboard
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000

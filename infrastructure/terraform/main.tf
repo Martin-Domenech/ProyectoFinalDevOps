@@ -69,3 +69,35 @@ module "compute" {
   security_group_id = module.security.ec2_security_group_id
   repo_url          = "https://github.com/Martin-Domenech/ProyectoFinalDevOps.git"
 }
+
+module "eks" {
+  source = "./modules/eks"
+
+  vpc_id             = data.aws_vpcs.default.ids[0]
+  subnet_ids         = data.aws_subnets.default.ids
+  cluster_name       = "${var.environment}-eks"
+  node_instance_type = var.eks_node_instance_type
+  node_min_size      = var.eks_node_min_size
+  node_desired_size  = var.eks_node_desired_size
+  node_max_size      = var.eks_node_max_size
+  node_disk_size     = 20
+  tags               = { Environment = var.environment }
+}
+
+module "finops" {
+  source = "./modules/finops"
+
+  environment        = var.environment
+  monthly_budget_usd = var.monthly_budget_usd
+}
+
+# Permitir que solo el Security Group de nodos EKS acceda a RDS (puerto 5432)
+resource "aws_security_group_rule" "rds_allow_from_eks_nodes" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = module.security.rds_security_group_id
+  source_security_group_id = module.eks.node_security_group_id
+  description              = "Allow Postgres only from EKS node security group"
+}

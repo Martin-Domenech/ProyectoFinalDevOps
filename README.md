@@ -1,110 +1,212 @@
-# Proyecto Final DevOps - Etapa 1
+# Proyecto Final DevOps
 
-Este repositorio contiene la etapa inicial de un proyecto DevOps guiado.
+API REST académica construida con Node.js, Express y PostgreSQL. El repositorio demuestra pruebas, contenedores, infraestructura como código, CI/CD, Kubernetes, seguridad automatizada, observabilidad y optimización básica de costos.
 
-## Objetivo de la etapa 1
-Crear una API Express mínima y pruebas automatizadas.
+> Este proyecto prioriza simplicidad y claridad didáctica. No representa una plataforma preparada para producción.
 
-## Estructura del proyecto
-- `AGENTS.md`: reglas y enfoque del proyecto guiado.
-- `README.md`: documentación del proyecto.
-- `.gitignore`: archivos ignorados.
-- `app/`: carpeta de la aplicación Express mínima.
-  - `package.json`: configuración del proyecto Node.js.
-  - `package-lock.json`: dependencias bloqueadas.
-  - `src/app.js`: definición de la aplicación Express.
-  - `src/server.js`: arranque del servidor.
-  - `tests/app.test.js`: pruebas automatizadas.
-  - `Dockerfile`: definición de la imagen de contenedor.
-  - `.dockerignore`: archivos ignorados durante la construcción de la imagen.
+## Arquitectura
 
-## Scripts disponibles (desde `app/`)
-- `npm install`: instala dependencias.
-- `npm test`: ejecuta las pruebas.
-- `npm start`: arranca la aplicación.
+```text
+GitHub Actions
+  ├── tests + npm audit + CodeQL
+  ├── Docker build → GHCR
+  ├── Terraform → AWS (EC2, RDS y EKS)
+  ├── kubectl → API + HPA + Ingress
+  └── OWASP ZAP
 
-## Rutas disponibles
-- `GET /` → bienvenida.
-- `GET /health` → estado de la app y salud de la base de datos.
-- `POST /users` → crea un usuario.
-- `GET /users` → lista usuarios.
-- `DELETE /users/:id` → elimina un usuario.
+Cliente → Ingress → Service → Pods Express → PostgreSQL RDS
+                              └→ /metrics → Prometheus → Grafana
+```
 
-## Uso
-1. Ir a la carpeta de la app:
-   ```bash
-   cd app
-   ```
-2. Instalar dependencias:
-   ```bash
-   npm install
-   ```
-3. Ejecutar pruebas:
-   ```bash
-   npm test
-   ```
-4. Iniciar la app localmente:
-   ```bash
-   npm start
-   ```
+EC2 conserva una forma directa de demostrar el despliegue inicial. EKS representa el destino final con Kubernetes. Ambos reutilizan la misma base RDS.
+
+## Funcionalidad
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/` | Mensaje de bienvenida |
+| GET | `/health` | Estado de la API y PostgreSQL |
+| GET | `/metrics` | Métricas compatibles con Prometheus |
+| GET | `/users` | Lista usuarios |
+| POST | `/users` | Crea un usuario |
+| DELETE | `/users/:id` | Elimina un usuario |
+
+La tabla `users` se crea de forma idempotente mediante `npm run init-db`.
+
+## Estructura
+
+```text
+app/                         API, Dockerfile y pruebas
+database/                    esquema SQL inicial
+infrastructure/
+  kubernetes/                Deployment, Service, Ingress, Job y HPA
+  monitoring/                Prometheus, Alertmanager, Grafana y dashboard
+  terraform/                 módulos AWS: EC2, RDS, EKS, seguridad y FinOps
+.github/workflows/
+  pipeline.yml               CI/CD, SAST y DAST
+  finops-schedule.yml        apagado y encendido programado de nodos
+```
+
+## Ejecución local
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Validación:
+
+```bash
+curl http://localhost:3000/
+curl http://localhost:3000/health
+curl http://localhost:3000/metrics
+curl -X POST http://localhost:3000/users \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Ada","email":"ada@example.com"}'
+```
+
+Sin Docker, desde `app/`:
+
+```bash
+npm ci
+npm run init-db
+npm test
+npm start
+```
 
 ## Docker
-1. Construir la imagen desde la carpeta `app`:
-   ```bash
-   cd app
-   docker build -t proyecto-final-devops:local .
-   ```
-2. Ejecutar el contenedor y exponer el puerto 3000:
-   ```bash
-   docker run -d --name proyecto-final-devops-local -p 3000:3000 proyecto-final-devops:local
-   ```
-3. Probar los endpoints:
-   ```bash
-   curl http://localhost:3000/
-   curl http://localhost:3000/health
-   curl -X POST -H "Content-Type: application/json" -d '{"name":"Martín","email":"martin@example.com"}' http://localhost:3000/users
-   curl http://localhost:3000/users
-   curl -X DELETE http://localhost:3000/users/1
-   ```
-4. Detener el contenedor:
-   ```bash
-   docker stop proyecto-final-devops-local
-   ```
-5. Eliminar el contenedor:
-   ```bash
-   docker rm proyecto-final-devops-local
-   ```
 
-## GitHub Actions CI
-Este repositorio incluye un workflow de GitHub Actions que valida el proyecto en cada push y pull request hacia la rama `main`.
+El Dockerfile multi-stage separa las dependencias de la imagen runtime. Usa Node.js 20 Alpine, instala únicamente dependencias de producción, copia sólo archivos necesarios y se ejecuta como usuario `node`.
 
-### Qué hace
-- descarga el repositorio
-- instala Node.js 20
-- restaura y cachea dependencias npm
-- ejecuta `npm ci` en `app/`
-- corre todos los tests con `npm test`
-- construye la imagen Docker usando `app/Dockerfile`
-- ejecuta `npm audit --audit-level=moderate`
+```bash
+docker build -t proyecto-final-devops:local app
+```
 
-### Cuándo se ejecuta
-- `push` a `main`
-- `pull_request` hacia `main`
+El pipeline publica:
 
-### Qué valida
-- que el código se pueda instalar correctamente
-- que los tests pasen
-- que la imagen pueda construirse con Docker
-- que no haya vulnerabilidades de npm de nivel `moderate` o superior
+- `ghcr.io/martin-domenech/proyecto-final-devops:latest`
+- `ghcr.io/martin-domenech/proyecto-final-devops:<commit-sha>`
 
-### Cómo verlo en GitHub
-En el repositorio, ir a la pestaña `Actions` y seleccionar el workflow `CI`.
+## Terraform
 
-### Qué significa un workflow fallido
-- si falla la instalación, hay un problema con dependencias o `package-lock`
-- si fallan tests, hay un error en la aplicación o en las pruebas
-- si falla la construcción de Docker, el `Dockerfile` o la app no están configurados correctamente
-- si falla `npm audit`, hay vulnerabilidades de nivel `moderate` o mayor en dependencias
+La configuración usa la VPC por defecto para reducir complejidad y costo académico. Los módulos crean security groups, EC2 con `systemd`, PostgreSQL RDS privado, EKS con managed node group y un presupuesto mensual.
 
-## Comentario
-Esta etapa se concentra en integrar CI; no se realiza publicación de imágenes ni despliegues automáticos.
+```bash
+cd infrastructure/terraform
+terraform fmt -check -recursive
+terraform init
+terraform validate
+terraform plan
+```
+
+El backend remoto usa un bucket S3 cuyo nombre se configura con el secreto `TF_STATE_BUCKET`. El bucket debe crearse una vez antes del primer pipeline. Para validar sin backend:
+
+```bash
+terraform init -backend=false
+terraform validate
+```
+
+Los valores configurables están en `terraform.tfvars.example`. No se versionan archivos `.tfvars` reales ni estados.
+
+## Kubernetes
+
+Los manifiestos incluyen Namespace, configuración, Secret de ejemplo, Job de base de datos, Deployment, Service, Ingress y HPA de 1 a 5 réplicas.
+
+Requisitos:
+
+- Ingress NGINX Controller;
+- Metrics Server para HPA;
+- secreto `ghcr-pull` si GHCR es privado.
+
+```bash
+kubectl kustomize infrastructure/kubernetes
+```
+
+El pipeline reemplaza la imagen con el SHA, obtiene las credenciales RDS desde Terraform, crea los secretos y espera que finalice el Job antes de desplegar la API.
+
+## Prometheus, Grafana y alertas
+
+La API publica métricas estándar de Node.js en `/metrics`. Prometheus descubre los pods por annotations y conserva datos durante siete días.
+
+Se incluyen:
+
+- alerta de API no disponible;
+- alerta de CPU elevada;
+- Alertmanager para agrupar y enviar eventos;
+- webhook académico que registra las notificaciones;
+- datasource y dashboard Grafana provisionados;
+- paneles de disponibilidad, CPU y memoria.
+
+```bash
+kubectl apply -f infrastructure/monitoring/monitoring.yml
+kubectl -n monitoring create secret generic grafana-admin \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password='CAMBIAR_ESTA_CLAVE'
+kubectl -n monitoring port-forward service/grafana 3001:3000
+```
+
+Grafana: `http://localhost:3001`. Para inspeccionar alertas notificadas:
+
+```bash
+kubectl -n monitoring logs deployment/alert-webhook
+```
+
+## CI/CD y DevSecOps
+
+`pipeline.yml` ejecuta:
+
+1. instalación, tests y auditoría de dependencias;
+2. validación Terraform y Kubernetes;
+3. SAST con CodeQL;
+4. build y push Docker a GHCR;
+5. aprovisionamiento con Terraform;
+6. despliegue en EKS;
+7. DAST con OWASP ZAP;
+8. publicación del reporte ZAP como artifact.
+
+Secretos requeridos en GitHub:
+
+| Secreto | Uso |
+|---|---|
+| `AWS_ACCESS_KEY_ID` | Autenticación AWS |
+| `AWS_SECRET_ACCESS_KEY` | Autenticación AWS |
+| `GHCR_USERNAME` | Pull de imagen desde EKS |
+| `GHCR_TOKEN` | Token de lectura de GHCR |
+| `GRAFANA_ADMIN_PASSWORD` | Acceso inicial a Grafana |
+| `TF_STATE_BUCKET` | Bucket S3 único para el estado Terraform |
+
+`GITHUB_TOKEN` publica la imagen. Las credenciales no se almacenan en los manifiestos finales.
+
+## FinOps
+
+- Instancias Graviton pequeñas.
+- Un nodo EKS y una réplica por defecto.
+- HPA y requests/limits.
+- Retención Prometheus limitada.
+- RDS de 20 GB.
+- AWS Budget mensual de USD 10.
+- Workflow que escala EKS a cero por la noche y lo restaura en horario de uso.
+
+El workflow FinOps también admite ejecución manual `up` o `down`. Al finalizar la demostración se puede ejecutar `terraform destroy`.
+
+## Validación y evidencias
+
+```bash
+cd app && npm test
+docker compose config
+terraform -chdir=infrastructure/terraform validate
+kubectl kustomize infrastructure/kubernetes
+```
+
+Guardar en `docs/evidencias/` capturas o logs de:
+
+- tests y pipeline en verde;
+- imagen GHCR;
+- outputs Terraform no sensibles;
+- recursos Kubernetes;
+- dashboard, targets y alertas;
+- reporte OWASP ZAP.
+
+## Entrega
+
+El informe debe explicar arquitectura, pasos reproducibles, decisiones FinOps y evidencias. Exportarlo como `PF+APELLIDO.pdf` y publicar el enlace solicitado de Google Drive.

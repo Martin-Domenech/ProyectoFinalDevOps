@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: devops-api-init-db
+  namespace: devops-backend
+  labels:
+    app.kubernetes.io/name: devops-api
+    app.kubernetes.io/component: backend
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: devops-api
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/job: init-db
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: init-db
+          image: ghcr.io/martin-domenech/proyecto-final-devops:latest
+          imagePullPolicy: IfNotPresent
+          command: ["npm", "run", "init-db"]
+          envFrom:
+            - configMapRef:
+                name: devops-api-config
+            - secretRef:
+                name: devops-api-secret
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"

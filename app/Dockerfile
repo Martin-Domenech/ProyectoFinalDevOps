@@ -1,16 +1,19 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine AS dependencies
 WORKDIR /app
 
 COPY package*.json ./
 
 RUN npm ci --omit=dev
 
-COPY src ./src
-
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
-COPY --from=builder /app /app
+ENV NODE_ENV=production
+
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY --chown=node:node package*.json ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node scripts ./scripts
 
 USER node
 

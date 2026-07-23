@@ -40,4 +40,11 @@ describe('API mínima de DevOps', () => {
     expect(response.body).not.toHaveProperty('message');
     expect(response.body).not.toHaveProperty('code');
   });
+
+  it('GET /metrics expone métricas para Prometheus', async () => {
+    const response = await request(app).get('/metrics');
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/plain');
+    expect(response.text).toContain('process_cpu_user_seconds_total');
+  });
 });

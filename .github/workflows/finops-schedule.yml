@@ -1,0 +1,45 @@
+name: FinOps - EKS schedule
+
+on:
+  schedule:
+    - cron: "0 23 * * 1-5"
+    - cron: "0 11 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Scale node group up or down
+        type: choice
+        options: [up, down]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  resize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Select capacity
+        id: capacity
+        env:
+          REQUESTED_ACTION: ${{ inputs.action }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "${REQUESTED_ACTION}" = "down" ] || [ "${SCHEDULE}" = "0 23 * * 1-5" ]; then
+            echo "config=minSize=0,maxSize=3,desiredSize=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "config=minSize=1,maxSize=3,desiredSize=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resize EKS node group
+        run: |
+          aws eks update-nodegroup-config \
+            --cluster-name devops-academico-eks \
+            --nodegroup-name ng-devops-academico-eks \
+            --scaling-config "${{ steps.capacity.outputs.config }}"

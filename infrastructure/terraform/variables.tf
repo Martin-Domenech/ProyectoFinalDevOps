@@ -57,3 +57,33 @@ variable "api_port" {
   type        = number
   default     = 3000
 }
+
+variable "eks_node_instance_type" {
+  description = "Tipo de instancia para nodos EKS (valor por defecto usado si no se pasa otro)."
+  type        = string
+  default     = "t4g.small"
+}
+
+variable "eks_node_min_size" {
+  description = "Mínimo de nodos en el node group de EKS."
+  type        = number
+  default     = 1
+}
+
+variable "eks_node_desired_size" {
+  description = "Tamaño deseado del node group EKS."
+  type        = number
+  default     = 1
+}
+
+variable "eks_node_max_size" {
+  description = "Máximo de nodos en el node group EKS."
+  type        = number
+  default     = 3
+}
+
+variable "monthly_budget_usd" {
+  description = "Límite mensual de referencia para AWS Budgets."
+  type        = number
+  default     = 10
+}
