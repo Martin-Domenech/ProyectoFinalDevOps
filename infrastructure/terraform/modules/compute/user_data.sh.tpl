@@ -50,6 +50,7 @@ Type=simple
 User=ec2-user
 WorkingDirectory=/home/ec2-user/ProyectoFinalDevOps/app
 EnvironmentFile=/home/ec2-user/ProyectoFinalDevOps/app/.env
+ExecStartPre=/usr/bin/npm run init-db
 ExecStart=/usr/bin/npm start
 Restart=on-failure
 RestartSec=5
