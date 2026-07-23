@@ -29,14 +29,15 @@ sudo chown -R ec2-user:ec2-user /home/ec2-user/ProyectoFinalDevOps
 sudo -u ec2-user npm install --omit=dev
 
 # Crear archivo .env para la aplicación
-cat > /home/ec2-user/ProyectoFinalDevOps/app/.env <<EOF
-DB_HOST=${db_endpoint}
-DB_PORT=${db_port}
-DB_NAME=${db_name}
-DB_USER=${db_username}
-DB_PASSWORD=${db_password}
-PORT=${api_port}
-EOF
+printf '%s\n' \
+  "DB_HOST=${db_endpoint}" \
+  "DB_PORT=${db_port}" \
+  "DB_NAME=${db_name}" \
+  "DB_USER=${db_username}" \
+  "DB_PASSWORD=${db_password}" \
+  "PORT=${api_port}" \
+  > /home/ec2-user/ProyectoFinalDevOps/app/.env
+
 sudo chown ec2-user:ec2-user /home/ec2-user/ProyectoFinalDevOps/app/.env
 
 # Crear unidad systemd para ejecutar la aplicación
